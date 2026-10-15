@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Clockworks to BACnet</title>
+<style>
+:root {
+  --navy: #0b2447; --navy-2: #143a70; --blue: #1d5fd0; --blue-dark: #174ea9; --blue-bg: #e8f0fd;
+  --bg: #f2f4f8; --card: #ffffff; --panel: #f7f9fc; --border: #e1e6ee; --border-2: #cfd6e2;
+  --ink: #101828; --ink2: #344054; --ink3: #667085;
+  --ok: #2ea45f; --ok-bg: #e7f6ee; --warn: #b7791f; --warn-bg: #fdf3e1; --bad: #d64545; --bad-bg: #fdecec;
+  --draft: #6b4fd8; --draft-bg: #efebfd; --edit-bg: #fff8e6;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06);
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --navy: #07172e; --navy-2: #10305c; --blue: #5b93f0; --blue-dark: #7aa8f5; --blue-bg: #16284a;
+    --bg: #0c131e; --card: #131c29; --panel: #182333; --border: #243247; --border-2: #33445e;
+    --ink: #e8edf4; --ink2: #c3ccd8; --ink3: #8b97a9;
+    --ok: #4cc07c; --ok-bg: #12301f; --warn: #e3a634; --warn-bg: #33270f; --bad: #f07272; --bad-bg: #3a1a1c;
+    --draft: #9d86f2; --draft-bg: #241d44; --edit-bg: #2e2712; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --navy: #07172e; --navy-2: #10305c; --blue: #5b93f0; --blue-dark: #7aa8f5; --blue-bg: #16284a;
+  --bg: #0c131e; --card: #131c29; --panel: #182333; --border: #243247; --border-2: #33445e;
+  --ink: #e8edf4; --ink2: #c3ccd8; --ink3: #8b97a9;
+  --ok: #4cc07c; --ok-bg: #12301f; --warn: #e3a634; --warn-bg: #33270f; --bad: #f07272; --bad-bg: #3a1a1c;
+  --draft: #9d86f2; --draft-bg: #241d44; --edit-bg: #2e2712; --shadow: none;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink2); font: 15px/1.5 "Noto Sans", "Segoe UI", system-ui, -apple-system, sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.top { background: var(--navy); color: #fff; }
+.top .in { max-width: 1440px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.top h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: .1px; }
+.top .sub { color: #b9c6dc; font-size: 13px; }
+.health { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; background: rgba(255,255,255,.08); padding: 6px 12px; border-radius: 999px; }
+.health .dot { width: 9px; height: 9px; border-radius: 50%; background: #98a2b3; }
+.health.ok .dot { background: #4cc07c; } .health.warn .dot { background: #e3a634; } .health.bad .dot { background: #f07272; }
+nav.tabs { max-width: 1440px; margin: 0 auto; padding: 0 24px; display: flex; gap: 4px; }
+nav.tabs button { background: none; border: 0; color: #b9c6dc; padding: 10px 14px; border-bottom: 3px solid transparent; cursor: pointer; }
+nav.tabs button[aria-selected="true"] { color: #fff; border-bottom-color: #5b93f0; }
+
+main { max-width: 1440px; margin: 0 auto; padding: 20px 24px 60px; }
+
+/* the pipeline: where every tag is on its way from the broker to BACnet */
+.flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); margin-bottom: 16px; overflow: hidden; }
+.flow .stage { padding: 16px 20px 14px; position: relative; border-right: 1px solid var(--border); }
+.flow .stage:last-child { border-right: 0; }
+.flow .stage:not(:last-child)::after { content: ""; position: absolute; right: -9px; top: 50%; width: 16px; height: 16px; background: var(--card); border-top: 1px solid var(--border); border-right: 1px solid var(--border); transform: translateY(-50%) rotate(45deg); z-index: 1; }
+.flow .n { font-size: 30px; font-weight: 600; color: var(--ink); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.flow .l { font-size: 13px; color: var(--ink3); }
+.flow .stage.pub .n { color: var(--ok); } .flow .stage.stale .n { color: var(--warn); }
+.flow .stage.stale.zero .n { color: var(--ink3); }
+@media (max-width: 760px) { .flow { grid-template-columns: repeat(2, 1fr); } .flow .stage::after { display: none; } .flow .stage:nth-child(2) { border-right: 0; } .flow .stage:nth-child(-n+2) { border-bottom: 1px solid var(--border); } }
+
+.banner { padding: 12px 16px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
+.banner.bad { background: var(--bad-bg); color: var(--bad); } .banner.warn { background: var(--warn-bg); color: var(--warn); }
+.banner strong { color: inherit; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.bar .grow { flex: 1; }
+.seg { display: inline-flex; border: 1px solid var(--border-2); border-radius: 8px; overflow: hidden; }
+.seg button { background: var(--card); border: 0; padding: 6px 12px; cursor: pointer; color: var(--ink2); border-right: 1px solid var(--border-2); font-size: 14px; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--blue-bg); color: var(--blue-dark); font-weight: 600; }
+input.search { border: 1px solid var(--border-2); border-radius: 8px; padding: 6px 10px; min-width: 220px; background: var(--card); }
+.btn { border: 1px solid var(--border-2); background: var(--card); color: var(--ink); padding: 7px 14px; border-radius: 8px; cursor: pointer; font-weight: 500; font-size: 14px; white-space: nowrap; }
+.btn:hover { border-color: var(--blue); }
+.btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.btn.primary:hover { background: var(--blue-dark); }
+.btn.danger { color: var(--bad); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th { text-align: left; font-weight: 600; color: var(--ink3); font-size: 13px; padding: 9px 8px; border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; white-space: nowrap; }
+td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr.edited td { background: var(--edit-bg); }
+tr.skipped td { color: var(--ink3); }
+td.path { min-width: 240px; }
+td.path .p { color: var(--ink); font-weight: 500; word-break: break-all; }
+td.path .meta { color: var(--ink3); font-size: 12px; }
+td input, td select { border: 1px solid var(--border-2); border-radius: 6px; padding: 4px 6px; background: var(--card); }
+td input.name { width: 240px; } td input.num { width: 84px; } td input.tiny { width: 56px; }
+td .val { font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+td .val small { color: var(--ink3); display: block; font-size: 12px; }
+.pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.pill.pub { background: var(--ok-bg); color: var(--ok); }
+.pill.draft { background: var(--draft-bg); color: var(--draft); }
+.pill.skip { background: var(--panel); color: var(--ink3); border: 1px solid var(--border); }
+.pill.stale { background: var(--warn-bg); color: var(--warn); }
+.note { font-size: 12px; color: var(--ink3); max-width: 260px; }
+.empty { padding: 40px 20px; text-align: center; color: var(--ink3); }
+.empty .btn { margin-top: 12px; }
+.foot { padding: 10px 14px; color: var(--ink3); font-size: 13px; display: flex; gap: 16px; flex-wrap: wrap; }
+.problems { margin: 0; padding: 10px 14px 10px 32px; background: var(--bad-bg); color: var(--bad); font-size: 13px; }
+
+.panel { padding: 20px; }
+.grid { display: grid; grid-template-columns: 240px minmax(0, 420px); gap: 14px 18px; align-items: center; }
+.grid label { color: var(--ink); font-weight: 500; }
+.grid .hint { grid-column: 2; margin-top: -10px; font-size: 13px; color: var(--ink3); }
+.grid input, .grid select { border: 1px solid var(--border-2); border-radius: 8px; padding: 7px 10px; background: var(--card); width: 100%; }
+@media (max-width: 680px) { .grid { grid-template-columns: 1fr; } .grid .hint { grid-column: 1; margin-top: -8px; } }
+.log { font-size: 13px; }
+h3.sect { font-size: 15px; color: var(--ink); margin: 26px 0 12px; }
+.grid textarea { border: 1px solid var(--border-2); border-radius: 8px; padding: 7px 10px; background: var(--card); width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.log div { display: grid; grid-template-columns: 170px 1fr; gap: 12px; padding: 7px 16px; border-bottom: 1px solid var(--border); }
+.log time { color: var(--ink3); font-variant-numeric: tabular-nums; }
+.log .warn { color: var(--warn); } .log .error { color: var(--bad); }
+dl.info { display: grid; grid-template-columns: 200px 1fr; gap: 8px 16px; margin: 0 0 16px; }
+dl.info dt { color: var(--ink3); } dl.info dd { margin: 0; color: var(--ink); word-break: break-all; }
+
+dialog { border: 1px solid var(--border); border-radius: 12px; padding: 0; background: var(--card); color: var(--ink2); max-width: 520px; width: calc(100% - 32px); }
+dialog::backdrop { background: rgba(11, 36, 71, .45); }
+dialog .dh { padding: 18px 20px 6px; } dialog h2 { margin: 0; font-size: 18px; color: var(--ink); }
+dialog .db { padding: 6px 20px 14px; } dialog .df { padding: 12px 20px 18px; display: flex; justify-content: flex-end; gap: 8px; }
+dialog input, dialog textarea { width: 100%; border: 1px solid var(--border-2); border-radius: 8px; padding: 8px 10px; background: var(--card); }
+dialog textarea { min-height: 180px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.toast { position: fixed; right: 24px; bottom: 24px; max-width: 440px; padding: 12px 16px; border-radius: 8px; background: var(--ink); color: var(--card); display: none; z-index: 10; }
+.toast.show { display: block; } .toast.bad { background: var(--bad); color: #fff; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: no-preference) { tr.edited td { transition: background-color .2s; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="in">
+    <div>
+      <h1>Clockworks to BACnet</h1>
+      <div class="sub">Publishes Clockworks Analytics fault results per equipment as BACnet objects for WebCTRL</div>
+    </div>
+    <div class="health" id="health" role="status"><span class="dot"></span><span id="healthText">Loading…</span></div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="mapping">Mapping</button>
+    <button role="tab" aria-selected="false" data-tab="activity">Activity</button>
+    <button role="tab" aria-selected="false" data-tab="settings">Settings</button>
+  </nav>
+</header>
+
+<main>
+  <div id="banners"></div>
+
+  <section class="flow" aria-label="Values from Clockworks to BACnet">
+    <div class="stage"><div class="n" id="fPoints">–</div><div class="l">Clockworks values in the Abound Normalizer</div></div>
+    <div class="stage"><div class="n" id="fMapped">–</div><div class="l">Mapped to a BACnet object</div></div>
+    <div class="stage pub"><div class="n" id="fPub">–</div><div class="l">Published to BACnet</div></div>
+    <div class="stage stale" id="fStaleBox"><div class="n" id="fStale">–</div><div class="l">Not updating (FAULT)</div></div>
+  </section>
+
+  <!-- Mapping -->
+  <section id="tab-mapping" class="card">
+    <div class="bar">
+      <div class="seg" role="group" aria-label="Show">
+        <button data-filter="all" aria-pressed="true">All</button>
+        <button data-filter="draft" aria-pressed="false">Needs approval</button>
+        <button data-filter="pub" aria-pressed="false">Published</button>
+        <button data-filter="skip" aria-pressed="false">Not published</button>
+      </div>
+      <input class="search" id="search" type="search" name="cwb-filter" autocomplete="off" placeholder="Filter by building, equipment or object name" aria-label="Filter">
+      <span class="grow"></span>
+      <button class="btn" id="btnPlan">Find new values</button>
+      <button class="btn" id="btnSave" disabled>Save changes</button>
+      <button class="btn primary" id="btnApprove" disabled>Approve and publish</button>
+    </div>
+    <ul class="problems" id="problems" hidden></ul>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th><input type="checkbox" id="selAll" aria-label="Select all shown"></th>
+          <th>Status</th><th>Clockworks value</th><th>Value</th><th>Object</th><th>Instance</th>
+          <th>Object name</th><th>Units</th><th>Scale</th><th>Offset</th><th>Bit</th><th></th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty" hidden>
+      <div>Nothing mapped yet. Set up Clockworks on the Settings tab, click <strong>Poll now</strong>, then come back and click Find values: every equipment value becomes a draft for review.</div>
+      <button class="btn primary" id="btnPlan2">Find values</button>
+    </div>
+    <div class="foot">
+      <span id="selInfo">0 selected</span>
+      <button class="btn" id="btnRemove" disabled>Unpublish selected</button>
+      <span class="grow"></span>
+      <button class="btn" id="btnExport">Export CSV</button>
+      <button class="btn" id="btnImport">Import CSV</button>
+    </div>
+  </section>
+
+  <!-- Activity -->
+  <section id="tab-activity" class="card" hidden>
+    <div class="panel">
+      <dl class="info" id="cycleInfo"></dl>
+      <button class="btn" id="btnSyncNow">Run one sync now</button>
+      <button class="btn" id="btnPollNow2">Poll Clockworks now</button>
+    </div>
+    <div class="scroll"><table id="bldTable" hidden><thead><tr><th>Building</th><th>Equipment</th><th>Diagnostics</th><th>With faults</th><th>Newest result</th><th>Last poll</th><th>Error</th></tr></thead><tbody></tbody></table></div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <!-- Settings -->
+  <section id="tab-settings" class="card" hidden>
+    <div class="panel">
+      <div class="grid">
+        <label for="sInterval">Update interval (seconds)</label><input id="sInterval" type="number" min="2" step="1">
+        <div class="hint">How often values are copied to BACnet. 5 seconds suits most sites.</div>
+        <label for="sStale">Not-updating timeout (seconds)</label><input id="sStale" type="number" min="60" step="60">
+        <div class="hint">How long without a successful Clockworks poll before objects show FAULT. Raised automatically to at least two poll intervals.</div>
+        <label for="sStaleAction">When Clockworks stops updating</label>
+        <select id="sStaleAction"><option value="flags">Set FAULT in Status_Flags</option><option value="none">Do nothing</option></select>
+        <div class="hint">_Clockworks.LinkOK and _Clockworks.MinutesSinceUpdate also report the link, for a WebCTRL alarm.</div>
+        <label for="sOffset">BACnet device</label>
+        <select id="sOffset"><option value="0">Platform device (offset 0)</option><option value="1">Offset 1</option><option value="2">Offset 2</option><option value="3">Offset 3</option></select>
+        <div class="hint">Used for new values. Offset 0 is the device configured in BACnet settings.</div>
+        <label for="sStart">First instance number</label><input id="sStart" type="number" min="0" step="1">
+        <div class="hint">New values are numbered from here, per object type. Existing numbers never change.</div>
+        <label for="sName">Object names</label>
+        <select id="sName"><option value="full">Building.Equipment.Value</option><option value="device">Equipment.Value</option></select>
+        <div class="hint">Used for new values. Rename objects on the Mapping tab (or by CSV) to match the WebCTRL equipment names.</div>
+        <label for="sApi">Normalizer API address</label><input id="sApi" type="text" placeholder="http://localhost:8080">
+        <div class="hint">Leave blank unless the console port is not 8080 (NF_PORT in /opt/nf/.env).</div>
+        <label for="sToken">API token</label><input id="sToken" type="password" autocomplete="new-password">
+        <div class="hint">Only if console authentication is enabled.</div>
+      </div>
+      <h3 class="sect">Clockworks Analytics API</h3>
+      <div class="grid">
+        <label for="cEnabled">Poll Clockworks</label>
+        <select id="cEnabled"><option value="false">Off</option><option value="true">On</option></select>
+        <div class="hint">The Abound Normalizer host needs outbound HTTPS to the API address below.</div>
+        <label for="cUrl">API address</label><input id="cUrl" type="text" placeholder="https://rest.buildingsapi.net">
+        <div class="hint">The URL Clockworks issued with the subscription key.</div>
+        <label for="cKey">Subscription key</label><input id="cKey" type="password" autocomplete="new-password">
+        <div class="hint">Sent as Ocp-Apim-Subscription-Key. Read-only: the app only retrieves data.</div>
+        <label for="cClients">Client IDs</label><input id="cClients" type="text" placeholder="blank = every client the key can see">
+        <label for="cBuildings">Building IDs</label><input id="cBuildings" type="text" placeholder="blank = every active building, e.g. 5817, 5820">
+        <div class="hint">Comma-separated. Test connection lists the buildings and their IDs.</div>
+        <label for="cPoll">Poll every (minutes)</label><input id="cPoll" type="number" min="5" step="5">
+        <div class="hint">Clockworks analyses run daily or hourly, so 60 minutes is plenty.</div>
+        <label for="cLookback">Lookback (days)</label><input id="cLookback" type="number" min="1" max="90">
+        <div class="hint">Diagnostics window requested each poll. AvoidableCost is the total over this window.</div>
+        <label for="cActive">Active window (days)</label><input id="cActive" type="number" min="1" max="90">
+        <div class="hint">A fault counts as active if it appears in the newest N days of results (1 = latest daily results only).</div>
+        <label for="cThr">Priority threshold</label><input id="cThr" type="number" min="0" max="10" step="0.5">
+        <div class="hint">A diagnostic counts as a fault when its highest priority (energy, comfort or maintenance, 0–10) is at least this. Raise it to alarm only on significant issues.</div>
+        <label for="cInterval">Analysis interval</label>
+        <select id="cInterval"><option value="Daily">Daily</option><option value="HalfDay">Half day</option><option value="Weekly">Weekly</option><option value="Monthly">Monthly</option></select>
+        <div class="hint">Which Clockworks results to read. Daily suits most sites; the active window counts in days of results.</div>
+        <label for="cTasks">Open tasks</label>
+        <select id="cTasks"><option value="true">Publish OpenTasks</option><option value="false">Skip tasks</option></select>
+        <label for="cTotals">Building totals</label>
+        <select id="cTotals"><option value="true">Publish per-building totals</option><option value="false">Equipment only</option></select>
+        <label for="cMetrics">Values per equipment</label><input id="cMetrics" type="text">
+        <div class="hint">Any of FaultActive, FaultCount, MaxPriority, EnergyPriority, ComfortPriority, MaintenancePriority, AvoidableCost, OpenTasks.</div>
+        <label for="cPayload">Diagnostics request template</label><textarea id="cPayload" rows="3" placeholder='blank = the documented request: {"CID":"{CID}", "BID":"{BID}", "StartDate":"{StartDate}", "EndDate":"{EndDate}", "AnalysisInterval":"{AnalysisInterval}"}'></textarea>
+        <div class="hint">Leave blank. Only for a Clockworks API version that expects a different request. Placeholders: "{CID}", "{BID}", "{StartDate}", "{EndDate}", "{AnalysisInterval}".</div>
+        <label for="mMax">Objects per BACnet device</label><input id="mMax" type="number" min="0" step="10">
+        <div class="hint">New values move to the next device offset when a device is full. 0 = no limit.</div>
+      </div>
+      <p><button class="btn" id="btnCwTest">Test connection</button> <button class="btn" id="btnPollNow">Poll now</button> <span id="cwOut" class="note"></span></p>
+      <div id="cwSteps" class="note"></div>
+      <div class="scroll"><table id="cwSample" hidden><thead><tr><th>Sample diagnostic</th></tr></thead><tbody></tbody></table></div>
+      <p><button class="btn primary" id="btnSettings">Save settings</button></p>
+      <dl class="info" id="platformInfo"></dl>
+    </div>
+  </section>
+</main>
+
+<dialog id="dlgApprove">
+  <div class="dh"><h2>Approve and publish</h2></div>
+  <div class="db">
+    <p id="approveText"></p>
+    <label for="approveBy">Approved by</label>
+    <input id="approveBy" type="text" name="cwb-approver" autocomplete="name" placeholder="Name, for the change record">
+  </div>
+  <div class="df"><button class="btn" data-close>Cancel</button><button class="btn primary" id="approveGo">Publish</button></div>
+</dialog>
+<dialog id="dlgBits">
+  <div class="dh"><h2>Split into bits</h2></div>
+  <div class="db">
+    <p>Each bit becomes its own Binary Value. Enter bit numbers, for example <code>0,1,4</code> or <code>0-7</code>.</p>
+    <input id="bitsInput" type="text" aria-label="Bits">
+  </div>
+  <div class="df"><button class="btn" data-close>Cancel</button><button class="btn primary" id="bitsGo">Add bit objects</button></div>
+</dialog>
+<dialog id="dlgImport">
+  <div class="dh"><h2>Import CSV</h2></div>
+  <div class="db">
+    <p>Paste an exported mapping, edited to match the WebCTRL names and numbering. Rows are matched by the <code>path</code> column (Building/Equipment/Value); changed rows return to “Needs approval”.</p>
+    <p><input type="file" id="importFile" accept=".csv,.txt,text/csv"> or paste below.</p>
+    <textarea id="importText" aria-label="CSV"></textarea>
+  </div>
+  <div class="df"><button class="btn" data-close>Cancel</button><button class="btn primary" id="importGo">Import</button></div>
+</dialog>
+<div class="toast" id="toast" role="alert"></div>
+
+<script>
+(function () {
+  'use strict';
+  // ---------------------------------------------------------------- hook calls
+  // The console opens app pages with ?applicationId=…&token=…; the token must be sent as a
+  // Bearer header on every API call, and the hook's id is looked up by its name.
+  var Q = new URLSearchParams(location.search);
+  var m = location.pathname.match(/\/apps\/static\/([^/]+)/);
+  var APP = Q.get('applicationId') || (m && decodeURIComponent(m[1])) || 'clockworks-bacnet';
+  var TOKEN = Q.get('token');
+  var BASE = '/api/v1/apps/' + encodeURIComponent(APP);
+  var DEMO = Q.get('demo') === '1';
+  var hookIdCache = null;
+
+  function headers(json) {
+    var h = {}; if (json) h['Content-Type'] = 'application/json';
+    if (TOKEN) h.Authorization = 'Bearer ' + TOKEN;
+    return h;
+  }
+  async function hookId() {
+    if (hookIdCache) return hookIdCache;
+    try {
+      var r = await fetch(BASE, { headers: headers(), credentials: 'same-origin', cache: 'no-store' });
+      if (r.ok) {
+        var d = await r.json(), app = (d.applications || [d.application || d])[0] || {};
+        var h = (app.hooks || []).find(function (x) { return x.name === 'api' || x.id === 'api'; });
+        if (h) return (hookIdCache = h.id);
+      }
+    } catch (e) {}
+    return 'api';
+  }
+  function rid() {
+    try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
+    var a = new Uint8Array(16); crypto.getRandomValues(a);
+    return Array.from(a).map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+  function rpcUrl(id) {
+    var p = location.pathname; if (!/\/$/.test(p)) p = p.replace(/[^/]*$/, '');
+    return p + '_rpc/' + id + '.json' + location.search;
+  }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function parse(v) { for (var i = 0; i < 3 && typeof v === 'string'; i++) { try { v = JSON.parse(v); } catch (e) { break; } } return v; }
+
+  async function call(action, extra, timeoutMs) {
+    if (DEMO) return demoCall(action, extra || {});
+    var id = rid();
+    var req = Object.assign({ action: action, rid: id }, extra || {});
+    var hook = BASE + '/hooks/' + encodeURIComponent(await hookId());
+    var start = await fetch(hook, { method: 'POST', headers: headers(true), credentials: 'same-origin',
+      body: JSON.stringify({ key: 'req', value: JSON.stringify(req) }) });
+    if (start.status === 401) throw new Error('The platform refused the request (HTTP 401). Open this app from the console’s Applications page so it receives a sign-in token.');
+    if (!start.ok) throw new Error('The app’s api hook could not be started (HTTP ' + start.status + '). Check the Hooks tab.');
+    var s = {}; try { s = await start.json(); } catch (e) {}
+    if (s.error && s.error.message) throw new Error(s.error.message);
+    var until = Date.now() + (timeoutMs || 65000), wait = 200, n = 0;
+    while (Date.now() < until) {
+      await sleep(wait); wait = Math.min(1000, Math.round(wait * 1.4)); n++;
+      try {
+        var r = await fetch(rpcUrl(id), { headers: headers(), credentials: 'same-origin', cache: 'no-store' });
+        if (r.ok) { var out = parse(await r.text()); if (out && typeof out === 'object') { if (out.ok === false) throw new Error(out.error || 'Request failed'); return out; } }
+      } catch (e) { if (!(e instanceof TypeError) && !(e instanceof SyntaxError)) throw e; }
+      if (s.pid && n % 3 === 0) {
+        try {
+          var q = await fetch(hook + '/results?pid=' + encodeURIComponent(s.pid), { headers: headers(), credentials: 'same-origin', cache: 'no-store' });
+          if (q.ok) {
+            var j = await q.json(), res = (j.results || []).find(function (x) { return !x.pid || String(x.pid) === String(s.pid); });
+            if (res && res.error && res.error.message) throw new Error('api hook error: ' + res.error.message);
+            var rv = res && (res.returnValue != null && res.returnValue !== '' ? res.returnValue : (res.returnData && res.returnData.value));
+            var o = parse(rv);
+            if (o && typeof o === 'object') { if (o.ok === false) throw new Error(o.error); return o; }
+          }
+        } catch (e) { if (!(e instanceof TypeError)) throw e; }
+      }
+    }
+    throw new Error('No answer from the api hook after ' + Math.round((timeoutMs || 65000) / 1000) + ' s. Check its runs on the Hooks tab.');
+  }
+
+  // ---------------------------------------------------------------- state
+  var S = { rows: [], points: {}, last: {}, stale: {}, edits: {}, sel: new Set(), filter: 'all', q: '', problems: [], status: null };
+  var UNITS = [[95, 'no units'], [64, '°F'], [62, '°C'], [98, '%'], [29, '%RH'], [56, 'psi'], [58, 'in. water'], [53, 'Pa'],
+    [54, 'kPa'], [3, 'A'], [2, 'mA'], [5, 'V'], [48, 'kW'], [47, 'W'], [19, 'kWh'], [27, 'Hz'], [104, 'rpm'], [84, 'cfm'],
+    [89, 'gpm'], [87, 'L/s'], [77, 'ft/min'], [96, 'ppm'], [73, 's'], [72, 'min'], [71, 'h'], [105, 'currency1 ($)']];
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function toast(msg, bad) { var t = $('toast'); t.textContent = msg; t.className = 'toast show' + (bad ? ' bad' : ''); clearTimeout(t._h); t._h = setTimeout(function () { t.className = 'toast'; }, bad ? 9000 : 4000); }
+  function busy(btn, on) { if (btn) btn.disabled = on; document.body.style.cursor = on ? 'progress' : ''; }
+
+  function view(r) { return Object.assign({}, r, S.edits[r.key] || {}); }
+  function rowState(r) { if (!r.enabled) return 'skip'; return r.approved ? 'pub' : 'draft'; }
+
+  // ---------------------------------------------------------------- loading
+  async function loadAll() {
+    try {
+      var res = await Promise.all([call('rows'), call('points', null, 90000), call('status')]);
+      S.rows = res[0].rows; S.problems = res[0].problems || []; S.last = res[0].runtime.last || {}; S.stale = res[0].runtime.stale || {};
+      S.points = {}; res[1].points.forEach(function (p) { S.points[p.uuid] = p; });
+      setStatus(res[2]);
+      render();
+    } catch (e) { banner('bad', e.message); setHealth('bad', 'Not connected'); }
+  }
+  async function refreshStatus() {
+    try { var st = await call('status'); setStatus(st); var rr = await call('rows'); S.last = rr.runtime.last || {}; S.stale = rr.runtime.stale || {}; renderRows(); }
+    catch (e) { setHealth('bad', 'Not connected'); }
+  }
+
+  function setHealth(kind, text) { $('health').className = 'health ' + kind; $('healthText').textContent = text; }
+  function banner(kind, html) { $('banners').innerHTML = html ? '<div class="banner ' + kind + '">' + html + '</div>' : ''; }
+
+  function setStatus(st) {
+    S.status = st;
+    var c = st.counts || {}, lc = st.lastCycle;
+    $('fPoints').textContent = lc ? lc.points : (Object.keys(S.points).length || '–');
+    $('fMapped').textContent = c.enabled != null ? c.enabled : '–';
+    $('fPub').textContent = c.approved != null ? c.approved : '–';
+    var stale = lc ? lc.stale : 0; $('fStale').textContent = stale;
+    $('fStaleBox').classList.toggle('zero', !stale);
+    var age = lc ? (Date.now() - Date.parse(lc.at)) / 1000 : Infinity;
+    if (st.apiError && !/404/.test(st.apiError)) { setHealth('bad', 'Can’t reach the platform API'); banner('bad', '<strong>The app can’t reach the platform API.</strong> ' + esc(st.apiError) + ' Set the API address on the Settings tab if the console port is not 8080.'); }
+    else if (st.clockworks && st.clockworks.enabled && st.clockworks.error) { setHealth('bad', 'Clockworks not reachable'); banner('bad', '<strong>Clockworks:</strong> ' + esc(st.clockworks.error) + ' Check the API settings on the Settings tab.'); }
+    else if (!st.clockworks || !st.clockworks.enabled) { setHealth('warn', 'Clockworks polling is off'); banner('warn', '<strong>Clockworks polling is off.</strong> Enter the API address and subscription key on the Settings tab and turn polling on.'); }
+    else if (!st.syncOk) { setHealth('bad', 'Sync failing'); banner('bad', '<strong>Sync is failing:</strong> ' + esc(st.syncError)); }
+    else if (!c.approved) { setHealth('warn', 'Nothing published yet'); banner('', ''); }
+    else if (age > 150) { setHealth('warn', 'Sync not running'); banner('warn', '<strong>The sync hook hasn’t run for ' + (isFinite(age) ? Math.round(age / 60) + ' min' : 'a while') + '.</strong> Check that the “sync” hook is listed and enabled on the app’s Hooks tab.'); }
+    else { setHealth('ok', 'Publishing · updated ' + Math.max(0, Math.round(age)) + ' s ago'); banner('', ''); }
+    renderActivity(st); renderSettings(st);
+  }
+
+  // ---------------------------------------------------------------- mapping table
+  function shownRows() {
+    var q = S.q.toLowerCase();
+    return S.rows.filter(function (r) {
+      var v = view(r);
+      if (S.filter !== 'all' && rowState(v) !== S.filter) return false;
+      return !q || (v.path + ' ' + v.name).toLowerCase().indexOf(q) >= 0;
+    });
+  }
+
+  function unitOptions(u) {
+    var has = UNITS.some(function (x) { return String(x[0]) === String(u); });
+    var o = UNITS.map(function (x) { return '<option value="' + x[0] + '"' + (String(x[0]) === String(u) ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('');
+    if (u !== '' && u != null && !has) o = '<option value="' + esc(u) + '" selected>BACnet ' + esc(u) + '</option>' + o;
+    return o;
+  }
+
+  function fmt(v) {
+    if (v === null || v === undefined) return '—';
+    if (typeof v === 'number') return String(Number(v.toPrecision(6)));
+    return String(v);
+  }
+
+  function renderRows() {
+    var list = shownRows();
+    $('empty').hidden = S.rows.length > 0;
+    var html = list.map(function (r) {
+      var v = view(r), st = rowState(v), p = S.points[r.point] || {}, edited = !!S.edits[r.key];
+      var isInt = /int/i.test(p.datatype || '') && !v.bit && v.bit !== 0;
+      var pill = st === 'pub' ? (S.stale[r.key] ? '<span class="pill stale">Not reporting</span>' : '<span class="pill pub">Published</span>')
+        : st === 'draft' ? '<span class="pill draft">Needs approval</span>' : '<span class="pill skip">Not published</span>';
+      var pv = S.last[r.key];
+      var dis = !v.enabled ? ' disabled' : '';
+      return '<tr data-key="' + esc(r.key) + '" class="' + (edited ? 'edited ' : '') + (st === 'skip' ? 'skipped' : '') + '">' +
+        '<td><input type="checkbox" class="sel"' + (S.sel.has(r.key) ? ' checked' : '') + ' aria-label="Select ' + esc(v.name) + '"></td>' +
+        '<td>' + pill + (st === 'skip' && v.note ? '<div class="note">' + esc(v.note) + '</div>' : '') + '</td>' +
+        '<td class="path"><div class="p">' + esc(v.path) + (v.bit !== '' && v.bit != null ? ' · bit ' + esc(v.bit) : '') + '</div><div class="meta">' + esc(p.datatype || '') + (p.units ? ' · ' + esc(p.units) : '') + '</div></td>' +
+        '<td><div class="val">' + esc(fmt(p.value)) + (pv !== undefined && st === 'pub' ? '<small>BACnet ' + esc(fmt(pv)) + '</small>' : '') + '</div></td>' +
+        '<td><select data-f="objectType"' + (v.enabled ? '' : '') + '>' +
+          '<option value="">—</option>' + ['av', 'bv', 'msv'].map(function (t) { return '<option value="' + t + '"' + (v.objectType === t ? ' selected' : '') + '>' + t.toUpperCase() + '</option>'; }).join('') + '</select></td>' +
+        '<td><input class="num" data-f="instance" type="number" min="0" value="' + esc(v.instance) + '"' + dis + '></td>' +
+        '<td><input class="name" data-f="name" type="text" value="' + esc(v.name) + '"' + dis + '></td>' +
+        '<td>' + (v.objectType === 'av' ? '<select data-f="units"' + dis + '>' + unitOptions(v.units) + '</select>'
+          : v.objectType === 'msv' ? '<input class="tiny" data-f="states" type="number" min="2" title="Number of states" value="' + esc(v.states || 4) + '"' + dis + '> states' : '') + '</td>' +
+        '<td>' + (v.objectType === 'av' ? '<input class="tiny" data-f="scale" type="text" inputmode="decimal" value="' + esc(v.scale) + '"' + dis + '>' : '') + '</td>' +
+        '<td>' + (v.objectType === 'av' ? '<input class="tiny" data-f="offset" type="text" inputmode="decimal" value="' + esc(v.offset) + '"' + dis + '>' : '') + '</td>' +
+        '<td>' + (v.bit !== '' && v.bit != null ? esc(v.bit) : '') + '</td>' +
+        '<td>' + (isInt && v.enabled ? '<button class="btn bits" type="button">Split bits</button>' : '') +
+          (!v.enabled && !/Node-level|control metric/.test(v.note || '') ? '<button class="btn include" type="button">Include</button>' : '') + '</td>' +
+        '</tr>';
+    }).join('');
+    $('rows').innerHTML = html;
+    var pr = S.problems || [];
+    $('problems').hidden = !pr.length;
+    $('problems').innerHTML = pr.slice(0, 8).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + (pr.length > 8 ? '<li>…and ' + (pr.length - 8) + ' more</li>' : '');
+    updateButtons();
+  }
+  function render() { renderRows(); }
+
+  function updateButtons() {
+    var nEdits = Object.keys(S.edits).length;
+    $('btnSave').disabled = !nEdits;
+    $('btnSave').textContent = nEdits ? 'Save changes (' + nEdits + ')' : 'Save changes';
+    var drafts = S.rows.filter(function (r) { return r.enabled && !r.approved && r.objectType; });
+    var selDrafts = drafts.filter(function (r) { return S.sel.has(r.key); });
+    var n = S.sel.size ? selDrafts.length : drafts.length;
+    $('btnApprove').disabled = !n || nEdits > 0;
+    $('btnApprove').textContent = n ? 'Approve and publish (' + n + ')' : 'Approve and publish';
+    $('btnApprove').title = nEdits ? 'Save your changes first' : '';
+    $('selInfo').textContent = S.sel.size + ' selected';
+    $('btnRemove').disabled = !S.rows.some(function (r) { return S.sel.has(r.key) && r.approved; });
+  }
+
+  function edit(key, field, value) {
+    var r = S.rows.find(function (x) { return x.key === key; }); if (!r) return;
+    var e = S.edits[key] || {};
+    e[field] = value;
+    for (var k in e) if (String(e[k]) === String(r[k] == null ? '' : r[k])) delete e[k];
+    if (Object.keys(e).length) S.edits[key] = e; else delete S.edits[key];
+  }
+
+  $('rows').addEventListener('change', function (ev) {
+    var tr = ev.target.closest('tr'); if (!tr) return;
+    var key = tr.dataset.key;
+    if (ev.target.classList.contains('sel')) { if (ev.target.checked) S.sel.add(key); else S.sel.delete(key); updateButtons(); return; }
+    var f = ev.target.dataset.f; if (!f) return;
+    var val = ev.target.value;
+    if (['instance', 'units', 'states'].indexOf(f) >= 0 && val !== '') val = Number(val);
+    edit(key, f, val);
+    if (f === 'objectType') { renderRows(); return; }
+    tr.classList.toggle('edited', !!S.edits[key]); updateButtons();
+  });
+  $('rows').addEventListener('click', function (ev) {
+    var tr = ev.target.closest('tr'); if (!tr) return;
+    if (ev.target.classList.contains('bits')) { S.bitsKey = tr.dataset.key; $('bitsInput').value = ''; $('dlgBits').showModal(); }
+    if (ev.target.classList.contains('include')) {
+      var r = S.rows.find(function (x) { return x.key === tr.dataset.key; });
+      edit(r.key, 'enabled', true); if (!view(r).objectType) edit(r.key, 'objectType', 'av'); renderRows();
+    }
+  });
+  $('selAll').addEventListener('change', function (ev) {
+    shownRows().forEach(function (r) { if (ev.target.checked) S.sel.add(r.key); else S.sel.delete(r.key); });
+    renderRows();
+  });
+  document.querySelectorAll('[data-filter]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      S.filter = b.dataset.filter;
+      document.querySelectorAll('[data-filter]').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+      renderRows();
+    });
+  });
+  $('search').addEventListener('input', function (ev) { S.q = ev.target.value; renderRows(); });
+
+  async function afterRows(res, msg) {
+    if (res.rows) S.rows = res.rows;
+    if (res.problems) S.problems = res.problems;
+    renderRows(); if (msg) toast(msg);
+    refreshStatus();
+  }
+
+  async function plan(btn) {
+    busy(btn, true);
+    try { var res = await call('plan', null, 90000); await afterRows(res, res.added ? res.added + ' new value(s) added for review' : 'No new values found. Poll Clockworks first (Settings).'); var p = await call('points', null, 90000); S.points = {}; p.points.forEach(function (x) { S.points[x.uuid] = x; }); renderRows(); }
+    catch (e) { toast(e.message, true); } finally { busy(btn, false); updateButtons(); }
+  }
+  $('btnPlan').onclick = function () { plan($('btnPlan')); };
+  $('btnPlan2').onclick = function () { plan($('btnPlan2')); };
+
+  $('btnSave').onclick = async function () {
+    var changes = Object.keys(S.edits).map(function (k) { return Object.assign({ key: k }, S.edits[k]); });
+    var published = changes.filter(function (c) { var r = S.rows.find(function (x) { return x.key === c.key; }); return r && r.approved; }).length;
+    if (published && !confirm(published + ' published object(s) will be removed from BACnet until you approve them again. WebCTRL will show them offline in the meantime. Continue?')) return;
+    busy(this, true);
+    try { var res = await call('save', { changes: changes }); S.edits = {}; await afterRows(res, 'Saved ' + res.changed + ' change(s)'); }
+    catch (e) { toast(e.message, true); } finally { busy(this, false); updateButtons(); }
+  };
+
+  $('btnApprove').onclick = function () {
+    var drafts = S.rows.filter(function (r) { return r.enabled && !r.approved && r.objectType && (!S.sel.size || S.sel.has(r.key)); });
+    S.approveKeys = drafts.map(function (r) { return r.key; });
+    $('approveText').textContent = 'Publish ' + drafts.length + ' object(s) on the BACnet device. They become visible to WebCTRL immediately.';
+    $('dlgApprove').showModal();
+  };
+  $('approveGo').onclick = async function () {
+    var by = $('approveBy').value.trim();
+    if (!by) { $('approveBy').focus(); return; }
+    busy(this, true);
+    try {
+      var res = await call('approve', { keys: S.approveKeys, by: by }, 120000);
+      $('dlgApprove').close(); S.sel.clear();
+      await afterRows(res, 'Published ' + res.created + ' object(s)' + (res.failed ? ', ' + res.failed + ' failed (see Activity)' : ''));
+    } catch (e) { toast(e.message, true); } finally { busy(this, false); }
+  };
+
+  $('btnRemove').onclick = async function () {
+    var keys = S.rows.filter(function (r) { return S.sel.has(r.key) && r.approved; }).map(function (r) { return r.key; });
+    if (!confirm('Unpublish ' + keys.length + ' object(s)? They are deleted from the BACnet device and WebCTRL will lose them. Their instance numbers stay reserved.')) return;
+    busy(this, true);
+    try { var res = await call('remove', { keys: keys }); S.sel.clear(); await afterRows(res, 'Unpublished ' + res.removed + ' object(s)'); }
+    catch (e) { toast(e.message, true); } finally { busy(this, false); }
+  };
+
+  $('bitsGo').onclick = async function () {
+    var bits = [];
+    $('bitsInput').value.split(',').forEach(function (part) {
+      var m2 = part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/); if (!m2) return;
+      for (var b = +m2[1]; b <= +(m2[2] || m2[1]); b++) if (b < 64) bits.push(b);
+    });
+    if (!bits.length) { $('bitsInput').focus(); return; }
+    busy(this, true);
+    try { var res = await call('save', { addBits: bits.map(function (b) { return { key: S.bitsKey, bit: b }; }) }); $('dlgBits').close(); await afterRows(res, 'Added ' + res.changed + ' bit object(s) for review'); }
+    catch (e) { toast(e.message, true); } finally { busy(this, false); }
+  };
+
+  $('btnExport').onclick = async function () {
+    try {
+      var res = await call('exportCsv');
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([res.csv], { type: 'text/csv' }));
+      a.download = res.filename; document.body.appendChild(a); a.click(); a.remove();
+    } catch (e) { toast(e.message, true); }
+  };
+  $('btnImport').onclick = function () { $('importText').value = ''; $('importFile').value = ''; $('dlgImport').showModal(); };
+  $('importFile').onchange = function () {
+    var f = this.files && this.files[0]; if (!f) return;
+    var rd = new FileReader(); rd.onload = function () { $('importText').value = String(rd.result || ''); }; rd.readAsText(f);
+  };
+  $('importGo').onclick = async function () {
+    busy(this, true);
+    try { var res = await call('importCsv', { csv: $('importText').value }); $('dlgImport').close(); await afterRows(res, (res.created ? res.created + ' created, ' : '') + res.matched + ' matched, ' + res.changed + ' changed, ' + res.unmatched + ' not matched' + (res.notFound && res.notFound.length ? ' (e.g. ' + res.notFound[0] + ')' : '')); }
+    catch (e) { toast(e.message, true); } finally { busy(this, false); }
+  };
+  document.querySelectorAll('dialog [data-close]').forEach(function (b) { b.onclick = function () { b.closest('dialog').close(); }; });
+
+  // ---------------------------------------------------------------- activity & settings
+  function renderActivity(st) {
+    var lc = st.lastCycle;
+    var rows = [['Last sync', lc ? new Date(lc.at).toLocaleString() : 'Not yet'],
+      ['Objects updated in last sync', lc ? lc.updated + ' of ' + lc.active : '—'],
+      ['Sync duration', lc ? lc.ms + ' ms' : '—'],
+      ['Values missing from Clockworks', lc ? lc.missing : '—'],
+      ['Not reporting', (st.staleNames || []).slice(0, 12).join(', ') || 'None']];
+    if (lc && lc.layersWaiting && lc.layersWaiting.length) rows.push(['Source layers with no points yet', lc.layersWaiting.join(', ')]);
+    var cw = st.clockworks;
+    if (cw && cw.enabled) {
+      rows.push(['Clockworks link', cw.error ? 'Error: ' + cw.error : (cw.linkOk ? 'OK' : 'Not OK')]);
+      rows.push(['Last complete poll', cw.lastComplete ? new Date(cw.lastComplete).toLocaleString() : 'Not yet']);
+      if (cw.inProgress) rows.push(['Poll in progress', cw.inProgress]);
+      rows.push(['Clockworks values as points', cw.values != null ? cw.values : '—']);
+    }
+    var b = cw && cw.buildings ? Object.keys(cw.buildings).map(function (k) { return cw.buildings[k]; }) : [];
+    $('bldTable').hidden = !b.length;
+    $('bldTable').querySelector('tbody').innerHTML = b.map(function (x) {
+      return '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.equipment != null ? x.equipment : '—') + '</td><td>' + esc(x.diagnostics != null ? x.diagnostics : '—') +
+        '</td><td>' + esc(x.faulted != null ? x.faulted : '—') + '</td><td>' + esc(x.newestDiagnostic ? new Date(x.newestDiagnostic).toLocaleDateString() : '—') +
+        '</td><td>' + esc(x.at ? new Date(x.at).toLocaleString() : '—') + '</td><td>' + esc(x.error || '') + '</td></tr>';
+    }).join('');
+    $('cycleInfo').innerHTML = rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd>'; }).join('');
+    $('log').innerHTML = (st.log || []).map(function (l) {
+      return '<div class="' + esc(l.level) + '"><time>' + esc(new Date(l.t).toLocaleString()) + '</time><span>' + esc(l.msg) + '</span></div>';
+    }).join('') || '<div><span></span><span>No activity yet.</span></div>';
+  }
+  var settingsLoaded = false;
+  function renderSettings(st) {
+    var s = st.settings || {};
+    if (!settingsLoaded) {
+      $('sInterval').value = s.interval; $('sStale').value = s.staleS; $('sStaleAction').value = s.staleAction;
+      $('sOffset').value = String(s.deviceOffset || 0); $('sStart').value = s.startInstance; $('sName').value = s.nameStyle;
+      $('sApi').value = s.apiBase || ''; $('sToken').value = s.apiToken || '';
+      var c = s.clockworks || {};
+      $('cEnabled').value = c.enabled ? 'true' : 'false'; $('cUrl').value = c.baseUrl || ''; $('cKey').value = c.subscriptionKey || '';
+      $('cClients').value = c.clientIds || ''; $('cBuildings').value = c.buildingIds || ''; $('cPoll').value = c.pollMinutes;
+      $('cLookback').value = c.lookbackDays; $('cActive').value = c.activeDays; $('cThr').value = c.priorityThreshold;
+      $('cTasks').value = c.includeTasks ? 'true' : 'false'; $('cTotals').value = c.buildingTotals ? 'true' : 'false';
+      $('cMetrics').value = c.metrics || ''; $('cPayload').value = c.diagPayload || ''; $('cInterval').value = c.analysisInterval || 'Daily';
+      $('mMax').value = s.maxObjectsPerDevice != null ? s.maxObjectsPerDevice : 250;
+      settingsLoaded = true;
+    }
+    var p = st.platform || {};
+    $('platformInfo').innerHTML = '<dt>App version</dt><dd>' + esc(st.appVersion || '—') + '</dd><dt>API address in use</dt><dd>' + esc(st.apiBase) + '</dd>' +
+      '<dt>Platform version</dt><dd>' + esc(p.version || p.Version || (st.apiError ? 'Unavailable' : '—')) + '</dd>';
+  }
+  $('btnSettings').onclick = async function () {
+    busy(this, true);
+    try {
+      await call('settings', { settings: {
+        interval: $('sInterval').value, staleS: $('sStale').value, staleAction: $('sStaleAction').value,
+        deviceOffset: $('sOffset').value, startInstance: $('sStart').value, nameStyle: $('sName').value,
+        apiBase: $('sApi').value.trim(), apiToken: $('sToken').value, maxObjectsPerDevice: $('mMax').value,
+        clockworks: cwForm() } });
+      toast('Settings saved'); settingsLoaded = false; refreshStatus();
+    } catch (e) { toast(e.message, true); } finally { busy(this, false); }
+  };
+  function cwForm() {
+    return { enabled: $('cEnabled').value === 'true', baseUrl: $('cUrl').value.trim(), subscriptionKey: $('cKey').value,
+      clientIds: $('cClients').value.trim(), buildingIds: $('cBuildings').value.trim(), pollMinutes: $('cPoll').value,
+      lookbackDays: $('cLookback').value, activeDays: $('cActive').value, priorityThreshold: $('cThr').value,
+      includeTasks: $('cTasks').value === 'true', buildingTotals: $('cTotals').value === 'true',
+      metrics: $('cMetrics').value.trim(), diagPayload: $('cPayload').value.trim(), analysisInterval: $('cInterval').value };
+  }
+  $('btnCwTest').onclick = async function () {
+    busy(this, true); $('cwOut').textContent = 'Checking the key, buildings, equipment and diagnostics…'; $('cwSteps').innerHTML = '';
+    try {
+      var r = (await call('cwTest', { clockworks: cwForm() }, 58000)).test;
+      $('cwOut').textContent = r.ok ? 'Connected. ' + r.calls + ' API call(s).' : 'Failed: ' + (r.error || 'see below');
+      $('cwSteps').innerHTML = (r.steps || []).map(function (x) { return '<div>' + (x.ok ? '✓ ' : '✗ ') + '<strong>' + esc(x.name) + '</strong>: ' + esc(x.detail) + '</div>'; }).join('') +
+        (r.diagRequest ? '<div>Request sent: <code>' + esc(JSON.stringify(r.diagRequest)) + '</code></div>' : '') +
+        (r.diagFields && r.diagFields.length ? '<div>Diagnostic fields: <code>' + esc(r.diagFields.join(', ')) + '</code></div>' : '') +
+        (r.taskFields && r.taskFields.length ? '<div>Task fields: <code>' + esc(r.taskFields.join(', ')) + '</code></div>' : '');
+      var tb = $('cwSample');
+      tb.querySelector('tbody').innerHTML = (r.diagSample || []).map(function (d) { return '<tr><td><code>' + esc(JSON.stringify(d)) + '</code></td></tr>'; }).join('');
+      tb.hidden = !(r.diagSample && r.diagSample.length);
+    } catch (e) { $('cwOut').textContent = e.message; } finally { busy(this, false); }
+  };
+  async function pollNow(btn) {
+    busy(btn, true); toast('Polling Clockworks… this can take up to a minute');
+    try {
+      var r = await call('cwPollNow', null, 70000);
+      if (r.skipped) toast(r.skipped, true);
+      else if (r.error) toast('Poll failed: ' + r.error, true);
+      else toast('Polled ' + r.buildingsPolled + ' building(s), ' + r.values + ' value(s)' + (r.inProgress ? '; continuing next run (' + r.inProgress + ')' : '') + '. Use Find values on the Mapping tab.');
+      refreshStatus();
+    } catch (e) { toast(e.message, true); } finally { busy(btn, false); }
+  }
+  $('btnPollNow').onclick = function () { pollNow(this); };
+  $('btnPollNow2').onclick = function () { pollNow(this); };
+  $('btnSyncNow').onclick = async function () {
+    busy(this, true);
+    try { var r = await call('syncNow', null, 120000); toast(r.skipped ? 'Sync is already running' : 'Sync done: ' + (r.last ? r.last.updated : 0) + ' updated'); refreshStatus(); }
+    catch (e) { toast(e.message, true); } finally { busy(this, false); }
+  };
+
+  document.querySelectorAll('[data-tab]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('[data-tab]').forEach(function (x) { x.setAttribute('aria-selected', x === b ? 'true' : 'false'); });
+      ['mapping', 'activity', 'settings'].forEach(function (t) { $('tab-' + t).hidden = t !== b.dataset.tab; });
+    });
+  });
+
+  // ---------------------------------------------------------------- demo data (?demo=1) for previews
+  function demoCall(action) {
+    var vals = [['Dutchtown HS/AHU-21/FaultActive', 'Boolean', true, 'bv', ''], ['Dutchtown HS/AHU-21/FaultCount', 'Float', 3, 'av', 95],
+      ['Dutchtown HS/AHU-21/MaxPriority', 'Float', 7, 'av', 95], ['Dutchtown HS/AHU-21/AvoidableCost', 'Float', 412.5, 'av', 105],
+      ['Dutchtown HS/AHU-21/OpenTasks', 'Float', 1, 'av', 95], ['Dutchtown HS/VAV-2-14/FaultActive', 'Boolean', false, 'bv', ''],
+      ['Dutchtown HS/_Building/AvoidableCost', 'Float', 1870.2, 'av', 105], ['_Clockworks/LinkOK', 'Boolean', true, 'bv', '']];
+    if (!S._demo) S._demo = vals.map(function (t, i) {
+      return { key: 'k' + i, point: 'k' + i, path: t[0], objectType: t[3], instance: i + 1, deviceOffset: 0,
+        name: t[0].replace(/ /g, '_').replace(/\//g, '.'), units: t[4], states: '', bit: '', scale: '', offset: '',
+        enabled: true, approved: i < 5, note: '' };
+    });
+    var rows = S._demo;
+    var pts = vals.map(function (t, i) { return { uuid: 'k' + i, path: t[0], datatype: t[1], units: '', value: t[2] }; });
+    var counts = { enabled: rows.length, approved: rows.filter(function (r) { return r.approved; }).length };
+    var now = new Date().toISOString();
+    var st = { ok: true, apiBase: 'http://localhost:8080', apiError: '', platform: { version: 'v3.10.7' }, appVersion: '1.0.0',
+      settings: { interval: 5, staleS: 7800, staleAction: 'flags', deviceOffset: 0, startInstance: 1, nameStyle: 'full',
+        clockworks: { enabled: true, baseUrl: 'https://rest.buildingsapi.net', subscriptionKey: '********', pollMinutes: 60, lookbackDays: 7, activeDays: 1, priorityThreshold: 1, includeTasks: true, buildingTotals: true, metrics: 'FaultActive,FaultCount,MaxPriority,AvoidableCost,OpenTasks' } },
+      clockworks: { enabled: true, linkOk: true, error: '', lastComplete: now, values: 8, buildings: { 5817: { name: 'Dutchtown HS', equipment: 42, diagnostics: 96, faulted: 6, newestDiagnostic: now, at: now, error: '' } } },
+      counts: counts, lastCycle: { at: now, ms: 12, points: 8, active: counts.approved, updated: 0, stale: 0, missing: 0, errors: 0 }, syncOk: true, staleNames: [],
+      log: [{ t: now, level: 'info', msg: 'Clockworks: poll complete: 1 building(s)' }] };
+    var map = { rows: { ok: true, rows: rows, problems: [], runtime: { last: { k0: true, k1: 3, k2: 7, k3: 412.5, k4: 1 }, stale: {} } },
+      points: { ok: true, points: pts }, status: st };
+    return Promise.resolve(map[action] || { ok: true, rows: rows, added: 0, changed: 0, created: 0 });
+  }
+
+  loadAll();
+  setInterval(refreshStatus, 15000);
+})();
+</script>
+</body>
+</html>

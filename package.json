@@ -1,0 +1,13 @@
+{
+  "name": "clockworks-bacnet",
+  "version": "1.0.1",
+  "description": "Abound Normalizer app: Clockworks Analytics FDD results to BACnet local objects",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "test": "node test/unit.js",
+    "e2e": "node test/e2e.js",
+    "dev": "node test/devserver.js 8090"
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,5 @@
+{
+  "name": "Clockworks to BACnet",
+  "description": "Publishes Clockworks Analytics FDD results (faults, priorities, avoidable cost, open tasks) per equipment as BACnet local objects (AV/BV) for WebCTRL. Read-only toward Clockworks.",
+  "minNfVersion": "3.10.0-1"
+}
